@@ -1,0 +1,230 @@
+# =====================================================================
+# Coreform Cubit journal
+# Symmetric structured mesh for the notched three-point-bending specimen
+#
+# Geometry follows the referenced sketch:
+#   - span/length = 8
+#   - height = 2
+#   - notch centered at x = 4
+#   - notch base width = 0.2
+#   - notch tip height = 0.4
+#
+# Meshing strategy:
+#   1. Build four mapped source patches on z=z_lo:
+#        left-lower, left-upper, right-lower, right-upper.
+#   2. Merge the shared symmetry/crack-path topology before meshing.
+#   3. Bias horizontal curves toward the crack path at x=x_notch.
+#   4. Map mesh the source patches.
+#   5. Disassociate the source mesh and extrude the mesh faces directly
+#      into HEX8 layers with create element extrude.
+#
+# This avoids geometric volume sweep/target remeshing and preserves the
+# biased source mesh on the far face.
+# =====================================================================
+
+reset
+reset aprepro
+
+# ---------------------------------------------------------------------
+# Geometry parameters
+# ---------------------------------------------------------------------
+#{L           = 8.0}
+#{H           = 2.0}
+#{thk         = 0.1}
+#{z_mid       = 0.0}
+#{z_lo        = z_mid - thk/2.0}
+#{z_hi        = z_mid + thk/2.0}
+
+#{x_left      = 0.0}
+#{x_right     = L}
+#{x_notch     = L/2.0}
+#{notch_w     = 0.2}
+#{notch_h     = 0.4}
+#{x_notch_l   = x_notch - notch_w/2.0}
+#{x_notch_r   = x_notch + notch_w/2.0}
+
+#{x_support_l = 0.0}
+#{x_support_r = L}
+#{x_load      = x_notch}
+#{path_y_end  = H}
+
+#{geom_tol    = 1.0e-7*L}
+
+# ---------------------------------------------------------------------
+# Discretization controls
+# ---------------------------------------------------------------------
+#{n_x             = 100}
+#{n_notch_side    = 32}
+#{n_crack_path    = 160}
+#{n_thk           = 2}
+
+#{x_bias_to_crack   = 1.04}
+#{x_bias_from_crack = 1.0/x_bias_to_crack}
+
+# Exodus IDs.
+#{ns_support_l          = 101}
+#{ns_support_r          = 102}
+#{ns_load_line          = 103}
+#{ns_symmetry_plane     = 104}
+#{ns_notch_flank_nodes  = 107}
+#{ns_crack_path_nodes   = 108}
+
+# =====================================================================
+# Build four structured source faces on z=z_lo
+# =====================================================================
+
+# Shared symmetry/crack-path vertices.
+create vertex {x_notch}   {notch_h} {z_lo}
+#{v_tip = Id("vertex")}
+create vertex {x_notch}   {H}       {z_lo}
+#{v_top_mid = Id("vertex")}
+
+# Left-side vertices.
+create vertex {x_left}    0.0       {z_lo}
+#{v_lb = Id("vertex")}
+create vertex {x_notch_l} 0.0       {z_lo}
+#{v_nl = Id("vertex")}
+create vertex {x_left}    {notch_h} {z_lo}
+#{v_lsplit = Id("vertex")}
+create vertex {x_left}    {H}       {z_lo}
+#{v_lt = Id("vertex")}
+
+# Right-side vertices.
+create vertex {x_notch_r} 0.0       {z_lo}
+#{v_nr = Id("vertex")}
+create vertex {x_right}   0.0       {z_lo}
+#{v_rb = Id("vertex")}
+create vertex {x_right}   {notch_h} {z_lo}
+#{v_rsplit = Id("vertex")}
+create vertex {x_right}   {H}       {z_lo}
+#{v_rt = Id("vertex")}
+
+create surface vertex {v_lb} {v_nl} {v_tip} {v_lsplit}
+#{source_ll = Id("surface")}
+surface {source_ll} name "source_left_lower_zminus"
+
+create surface vertex {v_lsplit} {v_tip} {v_top_mid} {v_lt}
+#{source_lu = Id("surface")}
+surface {source_lu} name "source_left_upper_zminus"
+
+create surface vertex {v_tip} {v_nr} {v_rb} {v_rsplit}
+#{source_rl = Id("surface")}
+surface {source_rl} name "source_right_lower_zminus"
+
+create surface vertex {v_tip} {v_rsplit} {v_rt} {v_top_mid}
+#{source_ru = Id("surface")}
+surface {source_ru} name "source_right_upper_zminus"
+
+# Merge common topology before meshing so the symmetry/crack path is a
+# shared mesh edge between the two halves.
+merge all
+
+# ---------------------------------------------------------------------
+# Recover source-face curves after merge
+# ---------------------------------------------------------------------
+
+#{bottom_l_curve      = CurveAt(0.5*x_notch_l, 0.0, z_lo, 1)}
+#{split_l_curve       = CurveAt(0.5*x_notch, notch_h, z_lo, 1)}
+#{top_l_curve         = CurveAt(0.5*x_notch, H, z_lo, 1)}
+#{left_lower_curve    = CurveAt(x_left, 0.5*notch_h, z_lo, 1)}
+#{left_upper_curve    = CurveAt(x_left, 0.5*(notch_h + H), z_lo, 1)}
+#{notch_left_curve    = CurveAt(0.5*(x_notch_l + x_notch), 0.5*notch_h, z_lo, 1)}
+
+#{bottom_r_curve      = CurveAt(0.5*(x_notch_r + x_right), 0.0, z_lo, 1)}
+#{split_r_curve       = CurveAt(0.5*(x_notch + x_right), notch_h, z_lo, 1)}
+#{top_r_curve         = CurveAt(0.5*(x_notch + x_right), H, z_lo, 1)}
+#{right_lower_curve   = CurveAt(x_right, 0.5*notch_h, z_lo, 1)}
+#{right_upper_curve   = CurveAt(x_right, 0.5*(notch_h + H), z_lo, 1)}
+#{notch_right_curve   = CurveAt(0.5*(x_notch + x_notch_r), 0.5*notch_h, z_lo, 1)}
+
+#{crack_curve_src     = CurveAt(x_notch, 0.5*(notch_h + path_y_end), z_lo, 1)}
+
+curve {bottom_l_curve}    name "bottom_left_edge"
+curve {split_l_curve}     name "split_left_edge_y_notch_h"
+curve {top_l_curve}       name "top_left_edge"
+curve {left_lower_curve}  name "left_lower_vertical_edge"
+curve {left_upper_curve}  name "left_upper_vertical_edge"
+curve {notch_left_curve}  name "starter_notch_left_flank"
+
+curve {bottom_r_curve}    name "bottom_right_edge"
+curve {split_r_curve}     name "split_right_edge_y_notch_h"
+curve {top_r_curve}       name "top_right_edge"
+curve {right_lower_curve} name "right_lower_vertical_edge"
+curve {right_upper_curve} name "right_upper_vertical_edge"
+curve {notch_right_curve} name "starter_notch_right_flank"
+
+curve {crack_curve_src}   name "potential_crack_path_source_edge"
+
+# =====================================================================
+# Structured source-face meshing
+# =====================================================================
+
+# Horizontal intervals.
+curve {bottom_l_curve} {split_l_curve} {top_l_curve} interval {n_x}
+curve {bottom_r_curve} {split_r_curve} {top_r_curve} interval {n_x}
+
+# Vertical/notch intervals.
+curve {left_lower_curve} {notch_left_curve} interval {n_notch_side}
+curve {right_lower_curve} {notch_right_curve} interval {n_notch_side}
+curve {left_upper_curve} {right_upper_curve} {crack_curve_src} interval {n_crack_path}
+
+# Bias horizontal curves so cells become smaller toward x=x_notch.
+# The factors are chosen according to curve orientation in the surface
+# construction above.
+curve {bottom_l_curve} scheme bias factor {x_bias_from_crack}
+curve {split_l_curve} {top_l_curve} scheme bias factor {x_bias_to_crack}
+
+curve {bottom_r_curve} scheme bias factor {x_bias_to_crack}
+curve {split_r_curve} {top_r_curve} scheme bias factor {x_bias_from_crack}
+
+surface {source_ll} {source_lu} {source_rl} {source_ru} scheme map
+mesh surface {source_ll} {source_lu} {source_rl} {source_ru}
+
+# =====================================================================
+# Convert the mapped source mesh into HEX8s by direct face extrusion
+# =====================================================================
+
+# This robust mesh-only extrusion preserves the biased mapped source
+# faces exactly and creates matching target faces and hex layers.
+disassociate mesh from surface {source_ll} {source_lu} {source_rl} {source_ru}
+quality face all scaled jacobian global
+create element extrude face all direction 0.0 0.0 1.0 distance {thk} layers {n_thk}
+
+# =====================================================================
+# Element block
+# =====================================================================
+
+block 1 hex all
+block 1 element type hex8
+block 1 name "specimen_hex8"
+block 1 description "Structured full hexahedral mesh of the single-notch bending specimen"
+
+# =====================================================================
+# Nodesets
+# =====================================================================
+
+nodeset {ns_support_l} add node with x_coord >= {x_support_l - geom_tol} and x_coord <= {x_support_l + geom_tol} and y_coord >= {-geom_tol} and y_coord <= {geom_tol} and z_coord >= {z_lo - geom_tol} and z_coord <= {z_hi + geom_tol}
+nodeset {ns_support_l} name "support_left_line"
+nodeset {ns_support_l} description "Left support column through thickness"
+
+nodeset {ns_support_r} add node with x_coord >= {x_support_r - geom_tol} and x_coord <= {x_support_r + geom_tol} and y_coord >= {-geom_tol} and y_coord <= {geom_tol} and z_coord >= {z_lo - geom_tol} and z_coord <= {z_hi + geom_tol}
+nodeset {ns_support_r} name "support_right_line"
+nodeset {ns_support_r} description "Right support column through thickness"
+
+nodeset {ns_load_line} add node with x_coord >= {x_load - geom_tol} and x_coord <= {x_load + geom_tol} and y_coord >= {H - geom_tol} and y_coord <= {H + geom_tol} and z_coord >= {z_lo - geom_tol} and z_coord <= {z_hi + geom_tol}
+nodeset {ns_load_line} name "load_line_full_thickness"
+nodeset {ns_load_line} description "Top load column through thickness on the symmetry line"
+
+nodeset {ns_symmetry_plane} add node with x_coord >= {x_notch - geom_tol} and x_coord <= {x_notch + geom_tol} and y_coord >= {notch_h - geom_tol} and y_coord <= {path_y_end + geom_tol} and z_coord >= {z_lo - geom_tol} and z_coord <= {z_hi + geom_tol}
+nodeset {ns_symmetry_plane} name "symmetry_crack_plane"
+nodeset {ns_symmetry_plane} description "Internal symmetry plane above the notch tip"
+
+nodeset {ns_notch_flank_nodes} add node with x_coord >= {x_notch_l - geom_tol} and x_coord <= {x_notch_r + geom_tol} and y_coord >= {-geom_tol} and y_coord <= {notch_h + geom_tol} and z_coord >= {z_lo - geom_tol} and z_coord <= {z_hi + geom_tol}
+nodeset {ns_notch_flank_nodes} name "starter_notch_flank_nodes"
+nodeset {ns_notch_flank_nodes} description "Nodes on the triangular starter notch flanks"
+
+nodeset {ns_crack_path_nodes} add node with x_coord >= {x_notch - geom_tol} and x_coord <= {x_notch + geom_tol} and y_coord >= {notch_h - geom_tol} and y_coord <= {path_y_end + geom_tol} and z_coord >= {z_lo - geom_tol} and z_coord <= {z_hi + geom_tol}
+nodeset {ns_crack_path_nodes} name "potential_crack_path_nodes"
+nodeset {ns_crack_path_nodes} description "Nodes along the full-height symmetry crack path"
+
+export Abaqus "threePointsBendingSingleNotch.inp" overwrite
