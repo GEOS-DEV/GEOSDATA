@@ -1,0 +1,229 @@
+# =====================================================================
+# Coreform Cubit journal
+# Three-point-bending specimen with three through-holes
+#
+# Meshing strategy used in this revision:
+#   1. Build the 3-D solid and recover the z=z_lo source face.
+#   2. Split the source face with the crack-path topology curve.
+#   3. Size the split hole curves and the crack-path curve explicitly.
+#   4. Pave the source face with quadrilaterals.
+#   5. Sweep the conforming source mesh through the thickness into HEX8s.
+#   6. Refine the swept mesh around the crack-path curve feature.
+# =====================================================================
+
+reset
+reset aprepro
+
+# ---------------------------------------------------------------------
+# Geometry parameters
+# ---------------------------------------------------------------------
+#{L           = 20.0}
+#{H           = 8.0}
+#{thk         = 0.1}
+#{z_mid       = 0.0}
+#{z_lo        = z_mid - thk/2.0}
+#{z_hi        = z_mid + thk/2.0}
+
+# Zero-width starter-notch edge on the source face.
+#{x_notch     = 4.0}
+#{notch_h     = 1.0}
+
+# Through-holes.
+#{x_hole      = 6.0}
+#{hole_r      = 0.25}
+#{y_hole_1    = 2.75}
+#{y_hole_2    = 4.75}
+#{y_hole_3    = 6.75}
+
+# Setup coordinates.
+#{x_support_l = 1.0}
+#{x_support_r = L - 1.0}
+#{x_load      = L/2.0}
+
+# Boolean overbuild and coordinate-selection tolerance.
+#{eps         = 1.0e-3}
+#{geom_tol    = 1.0e-7*L}
+
+# ---------------------------------------------------------------------
+# Discretization controls
+# ---------------------------------------------------------------------
+#{h_bulk          = 0.05}
+#{n_hole          = 50}
+#{n_notch         = 16}
+#{h_hole          = 2.0*3.141592653589793*hole_r/n_hole}
+#{h_path          = 0.01}
+
+# Keep n_thk even so that a layer lies exactly at z=z_mid.
+#{n_thk           = 2}
+
+# Crack-path post-sweep refinement.  The interval selects the
+# hex-sheet distance from the crack-path curve where a sheet is inserted.
+#{path_refine_interval = 1}
+
+# Exodus IDs.
+#{ns_support_l          = 101}
+#{ns_support_r          = 102}
+#{ns_load_line          = 103}
+#{ns_notch_face_nodes   = 107}
+#{ns_crack_path_nodes   = 108}
+
+# ---------------------------------------------------------------------
+# Potential crack-path geometry used to place the topology curve
+# ---------------------------------------------------------------------
+#{path_dx       = x_hole - x_notch}
+#{path_dy       = y_hole_2 - notch_h}
+#{path_len      = sqrt(path_dx*path_dx + path_dy*path_dy)}
+
+#{x_path_end    = x_hole   - hole_r*path_dx/path_len}
+#{y_path_end    = y_hole_2 - hole_r*path_dy/path_len}
+#{x_path_2      = x_notch + 0.12*(x_path_end - x_notch)}
+#{y_path_2      = notch_h + 0.24*(y_path_end - notch_h)}
+#{x_path_3      = x_notch + 0.38*(x_path_end - x_notch)}
+#{y_path_3      = notch_h + 0.50*(y_path_end - notch_h)}
+#{x_path_4      = x_notch + 0.72*(x_path_end - x_notch)}
+#{y_path_4      = notch_h + 0.79*(y_path_end - notch_h)}
+
+# =====================================================================
+# Build the solid and cut the three holes
+# =====================================================================
+
+create brick x {L} y {H} z {thk}
+#{parent_vol = Id("volume")}
+volume {parent_vol} move x {L/2.0} y {H/2.0} z {z_mid}
+
+create cylinder height {thk + 2.0*eps} radius {hole_r}
+#{hole_cut_1 = Id("volume")}
+volume {hole_cut_1} move x {x_hole} y {y_hole_1} z {z_mid}
+
+create cylinder height {thk + 2.0*eps} radius {hole_r}
+#{hole_cut_2 = Id("volume")}
+volume {hole_cut_2} move x {x_hole} y {y_hole_2} z {z_mid}
+
+create cylinder height {thk + 2.0*eps} radius {hole_r}
+#{hole_cut_3 = Id("volume")}
+volume {hole_cut_3} move x {x_hole} y {y_hole_3} z {z_mid}
+
+subtract volume {hole_cut_1} {hole_cut_2} {hole_cut_3} from volume {parent_vol}
+
+# There is only one remaining volume; do not issue imprint all / merge all.
+#{specimen = VolumeAt(L/2.0, H/2.0, z_mid, 1)}
+volume {specimen} name "three_hole_bending_specimen"
+
+# ---------------------------------------------------------------------
+# Exact setup vertices on the source face
+# ---------------------------------------------------------------------
+# These positions split the source-face boundary curves.  The resulting
+# quad-mesh nodes are then swept into exact through-thickness columns.
+
+imprint volume {specimen} with position {x_support_l} 0.0 {z_lo} position {x_support_r} 0.0 {z_lo} position {x_load}      {H} {z_lo}
+
+# ---------------------------------------------------------------------
+# Zero-width starter edge on the source face only
+# ---------------------------------------------------------------------
+#{source_surf = SurfaceAt(L/2.0, H/2.0, z_lo, 1)}
+
+create curve polyline location {x_notch} 0.0       {z_lo} location {x_notch} {notch_h} {z_lo}
+#{notch_guide = Id("curve")}
+
+imprint surface {source_surf} with curve {notch_guide}
+
+# Recover IDs after the imprint changes topology.
+#{source_surf    = SurfaceAt(L/2.0, H/2.0, z_lo, 1)}
+#{notch_edge_src = CurveAt(x_notch, notch_h/2.0, z_lo, 1)}
+
+curve {notch_edge_src} name "starter_notch_edge_zminus"
+
+curve {notch_edge_src} interval {n_notch}
+
+# ---------------------------------------------------------------------
+# Potential crack-path topology curve on the source face
+# ---------------------------------------------------------------------
+# Splitting the source surface makes the crack path a real topological
+# boundary, rather than a free curve overlay that the paver can ignore.
+
+split surface {source_surf} across location {x_notch} {notch_h} {z_lo} location {x_path_2} {y_path_2} {z_lo} location {x_path_3} {y_path_3} {z_lo} location {x_path_4} {y_path_4} {z_lo} location {x_path_end} {y_path_end} {z_lo}
+#{path_curve = Id("curve")}
+
+# Recover IDs after the path split.
+#{source_surf = SurfaceAt(L/2.0, H/2.0, z_lo, 1)}
+#{hole_curve_1 = CurveAt(x_hole + hole_r, y_hole_1, z_lo, 1)}
+#{hole_curve_3 = CurveAt(x_hole + hole_r, y_hole_3, z_lo, 1)}
+
+surface {source_surf} name "quad_source_zminus"
+curve {path_curve} name "potential_crack_path_refinement_curve"
+
+# =====================================================================
+# Pave the source face
+# =====================================================================
+
+set paver cleanup extend
+
+surface {source_surf} size {h_bulk}
+
+# Apply curve sizing after the bulk surface size so the surface target
+# cannot relax the explicit boundary and crack-path controls.
+curve {notch_edge_src} interval {n_notch}
+curve {path_curve} size {h_path}
+curve {hole_curve_1} {hole_curve_3} interval {n_hole}
+
+# The crack-path split cuts the middle-hole circumference, so no single
+# original middle-hole curve ID remains.  Select all cut middle-hole arcs
+# by location and give each arc the equivalent n_hole edge size.
+curve in surface {source_surf} with x_coord >= {x_hole - hole_r - geom_tol} and x_coord <= {x_hole + hole_r + geom_tol} and y_coord >= {y_hole_2 - hole_r - geom_tol} and y_coord <= {y_hole_2 + hole_r + geom_tol} size {h_hole}
+
+surface {source_surf} scheme pave
+mesh surface {source_surf}
+
+# =====================================================================
+# Sweep the source mesh through the thickness into HEX8s
+# =====================================================================
+# The crack path remains a mesh-edge path on the z=z_lo sweep layer.
+
+#{target_surf = SurfaceAt(L/2.0, H/2.0, z_hi, 1)}
+surface {target_surf} name "quad_target_zplus"
+
+volume {specimen} scheme sweep source surface {source_surf} target surface {target_surf}
+volume {specimen} interval {n_thk}
+mesh volume {specimen}
+
+# Cubit's Refine Mesh Start Node ... Direction Edge ... End Node command
+# rejects this crack path because its mesh edges are owned by the sweep
+# source surface.  Use the supported feature-curve refinement instead.
+refine mesh volume {specimen} feature curve {path_curve} interval {path_refine_interval}
+
+# =====================================================================
+# Element block
+# =====================================================================
+
+block 1 hex all
+block 1 element type hex8
+block 1 name "specimen_hex8"
+block 1 description "Extruded linear hexahedral mesh of the three-hole specimen"
+
+# =====================================================================
+# Nodesets
+# =====================================================================
+# Explicit lower/upper coordinate bounds are used instead of the
+# extended-parser tolerance keyword, which was rejected in the log.
+
+nodeset {ns_support_l} add node with x_coord >= {x_support_l - geom_tol} and x_coord <= {x_support_l + geom_tol} and y_coord >= {-geom_tol} and y_coord <= {geom_tol} and z_coord >= {z_lo - geom_tol} and z_coord <= {z_hi + geom_tol}
+nodeset {ns_support_l} name "support_left_line"
+nodeset {ns_support_l} description "Left support column through thickness"
+
+nodeset {ns_support_r} add node with x_coord >= {x_support_r - geom_tol} and x_coord <= {x_support_r + geom_tol} and y_coord >= {-geom_tol} and y_coord <= {geom_tol} and z_coord >= {z_lo - geom_tol} and z_coord <= {z_hi + geom_tol}
+nodeset {ns_support_r} name "support_right_line"
+nodeset {ns_support_r} description "Right support column through thickness"
+
+nodeset {ns_load_line} add node with x_coord >= {x_load - geom_tol} and x_coord <= {x_load + geom_tol} and y_coord >= {H - geom_tol} and y_coord <= {H + geom_tol} and z_coord >= {z_lo - geom_tol} and z_coord <= {z_hi + geom_tol}
+nodeset {ns_load_line} name "load_line_full_thickness"
+nodeset {ns_load_line} description "Central load column through thickness"
+
+nodeset {ns_notch_face_nodes} add node with x_coord >= {x_notch - geom_tol} and x_coord <= {x_notch + geom_tol} and y_coord >= {-geom_tol} and y_coord <= {notch_h + geom_tol} and z_coord >= {z_lo - geom_tol} and z_coord <= {z_hi + geom_tol}
+nodeset {ns_notch_face_nodes} name "starter_notch_shared_face_nodes"
+nodeset {ns_notch_face_nodes} description "Nodes on the unsplit zero-width starter interface"
+
+nodeset {ns_crack_path_nodes} add node in curve {path_curve}
+nodeset {ns_crack_path_nodes} name "potential_crack_path_nodes"
+nodeset {ns_crack_path_nodes} description "Nodes on the source-layer potential crack path; expanded through thickness by inp_to_vtu.py"
+
+export Abaqus "threePointsBendingWithHoles.inp" overwrite

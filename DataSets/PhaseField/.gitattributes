@@ -1,0 +1,2 @@
+threePointsBendSingleNotch/threePointsBendingSingleNotch.vtu filter=lfs diff=lfs merge=lfs -text
+threePointsBendWithHoles/threePointsBendingWithHoles.vtu filter=lfs diff=lfs merge=lfs -text
